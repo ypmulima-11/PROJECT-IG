@@ -180,9 +180,20 @@ h1 { margin: 6px 0 4px; color: #252d28; font-family: Georgia, "Times New Roman",
 .preview-banner strong { color: #645936; font-size: 10px; font-weight: 650; }
 .preview-banner span:not(.preview-banner-icon) { color: #8b8268; font-size: 9px; line-height: 1.5; }
 .plan-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.plan-section { display: flex; flex-direction: column; gap: 10px; }
+.plan-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plan-section-heading h2 { margin: 0 0 3px; color: #303a33; font: 500 18px Georgia, serif; }
+.plan-section-heading p { margin: 0; color: #879087; font-size: 9px; }
+.plan-editor-form { display: flex; flex-direction: column; gap: 12px; }
+.plan-editor-heading h2 { margin: 5px 0 0; color: #303a33; font: 500 17px Georgia, serif; }
+.plan-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
+.form-field input { width: 100%; min-height: 35px; padding: 0 9px; border: 1px solid var(--line); border-radius: 3px; outline: none; color: #465249; background: #fff; font: 9px var(--font-sans); }
+.form-field input:focus { border-color: #849783; box-shadow: 0 0 0 2px #e9eee7; }
+.plan-form-actions { display: flex; gap: 7px; }
 .plan-card { min-height: 166px; padding: 14px 15px 12px; border: 1px solid var(--line-strong); background: var(--surface); transition: border-color .15s, box-shadow .15s; }
 .plan-card-selected { border-color: #8da28e; box-shadow: inset 0 2px #607d64; }
 .plan-card-top { display: flex; align-items: center; justify-content: space-between; }
+.plan-remove { width: 20px; height: 20px; border: 1px solid #e8e2df; border-radius: 3px; color: #9e5d53; background: #fff; cursor: pointer; font-size: 14px; line-height: 1; }
 .plan-icon { width: 25px; height: 25px; display: grid; place-items: center; border: 1px solid #e7ebe3; border-radius: 4px; color: #62806a; font-size: 17px; }
 .plan-description { color: #909990; font-size: 8px; }
 .plan-card h2 { margin: 12px 0 3px; color: #303b33; font: 500 17px Georgia, serif; }
@@ -280,6 +291,7 @@ h1 { margin: 6px 0 4px; color: #252d28; font-family: Georgia, "Times New Roman",
 
 @media (max-width: 1050px) {
   .plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plan-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-grid, .workspace-grid.guide-grid, .settings-top-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
@@ -296,6 +308,9 @@ h1 { margin: 6px 0 4px; color: #252d28; font-family: Georgia, "Times New Roman",
   .filter-row { align-items: flex-start; flex-direction: column; justify-content: center; padding: 9px 12px; }
   .workspace-note { align-items: flex-start; line-height: 1.5; }
   .plan-grid { gap: 7px; }
+  .plan-form-grid { grid-template-columns: 1fr; }
+  .plan-section-heading { align-items: flex-start; }
+  .plan-section-heading .button { flex: 0 0 auto; }
   .plan-card { min-height: 148px; padding: 11px; }
   .plan-card h2 { font-size: 15px; }
   .workspace-card { padding: 14px; }
