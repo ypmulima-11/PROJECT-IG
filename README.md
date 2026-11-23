@@ -27,7 +27,7 @@ Copy `apps/api/.env.example` to `apps/api/.env` to change the API port or dashbo
 
 The `main` branch deploys the static web dashboard through [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). In the repository, open **Settings → Pages** and choose **GitHub Actions** as the publishing source. After the workflow succeeds, the project site is available at <https://ypmulima-11.github.io/PROJECT-IG/>.
 
-GitHub Pages serves static files, so this deployment uses the bundled sample data. Session controls change the on-page preview only, and voucher codes are preview-only; the hosted site does not run the API, database, or router integrations.
+GitHub Pages serves static files, so this deployment uses the bundled sample data. Session controls, custom plans, and generated voucher previews are interactive and saved in the current browser only. Voucher codes are not activated on a router or shared with another operator. The hosted site does not run the API, database, or router integrations.
 
 ## Architecture blueprint
 
