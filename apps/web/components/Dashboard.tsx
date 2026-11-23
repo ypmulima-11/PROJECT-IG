@@ -5,6 +5,9 @@ import { io, type Socket } from "socket.io-client";
 import { demoSnapshot } from "@/lib/demo-data";
 import type { Channel, DashboardSnapshot, LedgerRow, SessionRow } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { WorkspaceViews, type WorkspaceView } from "@/components/WorkspaceViews";
+
+type NavigationSection = "Overview" | WorkspaceView;
 
 const money = (amount: number) => new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(amount);
 const compactData = (mb: number) => mb >= 1_000 ? `${(mb / 1_000).toFixed(2)} GB` : `${Math.round(mb)} MB`;
@@ -71,7 +74,7 @@ export function Dashboard() {
   const [query, setQuery] = useState("");
   const [socketLive, setSocketLive] = useState(false);
   const [notice, setNotice] = useState("");
-  const [navActive, setNavActive] = useState("Overview");
+  const [navActive, setNavActive] = useState<NavigationSection>("Overview");
   const [busyMac, setBusyMac] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const apiBase = typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:4000` : "http://localhost:4000";
@@ -120,9 +123,9 @@ export function Dashboard() {
     } finally { setBusyMac(null); window.setTimeout(() => setNotice(""), 3_500); }
   };
 
-  const exportCsv = () => {
+  const exportCsv = (entries: LedgerRow[] = matchingEntries) => {
     const header = ["Timestamp", "Reference", "Customer / voucher", "Package", "Payment channel", "Amount TZS", "Running balance TZS"];
-    const rows = matchingEntries.map((row) => [new Date(row.occurredAt).toISOString(), row.reference, row.customerLabel, row.packageName, channelLabels[row.channel], String(row.amountTzs), String(row.balanceTzs)]);
+    const rows = entries.map((row) => [new Date(row.occurredAt).toISOString(), row.reference, row.customerLabel, row.packageName, channelLabels[row.channel], String(row.amountTzs), String(row.balanceTzs)]);
     const csv = [header, ...rows].map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = `project-ig-ledger-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
@@ -130,8 +133,16 @@ export function Dashboard() {
 
   const periodDate = new Date();
   const dayLabel = periodDate.toLocaleDateString("en-GB", { timeZone: "Africa/Dar_es_Salaam", weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  const title = navActive === "Overview" ? "Daily ledger" : navActive;
-  const subtitle = navActive === "Overview" ? "Sales, sessions, and router health in one place." : `${navActive} records for Kijitonyama hotspot operations.`;
+  const pageCopy: Record<NavigationSection, { title: string; subtitle: string; overline: string }> = {
+    Overview: { title: "Daily ledger", subtitle: "Sales, sessions, and router health in one place.", overline: "OPERATOR OVERVIEW" },
+    "Sales ledger": { title: "Sales ledger", subtitle: "Review and export every recorded hotspot payment.", overline: "REVENUE · KIJITONYAMA" },
+    "Connected users": { title: "Connected users", subtitle: "Monitor active devices and manage access sessions.", overline: "LIVE ACCESS · KIJITONYAMA" },
+    "Vouchers & plans": { title: "Vouchers & plans", subtitle: "Review access plans and prepare voucher batches.", overline: "PRODUCTS · KIJITONYAMA" },
+    "Traffic reports": { title: "Traffic reports", subtitle: "See current bandwidth use and router activity.", overline: "NETWORK · KIJITONYAMA" },
+    "Setup guide": { title: "Setup guide", subtitle: "Connect router locations to the Project IG service.", overline: "GETTING STARTED" },
+    Settings: { title: "Settings", subtitle: "Review workspace, service, and router connection status.", overline: "WORKSPACE CONFIGURATION" },
+  };
+  const { title, subtitle, overline } = pageCopy[navActive];
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -139,11 +150,11 @@ export function Dashboard() {
       <div className="location-selector"><span className="location-symbol"><Icon name="wifi" size={17}/></span><div><span className="eyebrow">CURRENT LOCATION</span><strong>Kijitonyama</strong></div><span className="chevron">⌄</span></div>
       <span className="nav-section-label">WORKSPACE</span>
       <nav className="primary-nav" aria-label="Main navigation">
-        {[["Overview", "grid"], ["Sales ledger", "receipt"], ["Connected users", "wifi"], ["Vouchers & plans", "box"], ["Traffic reports", "chart"]].map(([label, icon]) => <button key={label} className={`nav-item ${navActive === label ? "active" : ""}`} onClick={() => setNavActive(label!)}><Icon name={icon!}/><span>{label}</span>{label === "Connected users" && <span className="nav-count">{snapshot.summary.activeDevices}</span>}</button>)}
+        {[["Overview", "grid"], ["Sales ledger", "receipt"], ["Connected users", "wifi"], ["Vouchers & plans", "box"], ["Traffic reports", "chart"]].map(([label, icon]) => <button key={label} className={`nav-item ${navActive === label ? "active" : ""}`} aria-current={navActive === label ? "page" : undefined} aria-label={label} onClick={() => setNavActive(label as NavigationSection)}><Icon name={icon!}/><span>{label}</span>{label === "Connected users" && <span className="nav-count">{snapshot.summary.activeDevices}</span>}</button>)}
       </nav>
       <span className="nav-section-label tools-label">TOOLS</span>
       <nav className="primary-nav" aria-label="Tools">
-        {[["Setup guide", "book"], ["Settings", "settings"]].map(([label, icon]) => <button key={label} className={`nav-item ${navActive === label ? "active" : ""}`} onClick={() => setNavActive(label!)}><Icon name={icon!}/><span>{label}</span></button>)}
+        {[["Setup guide", "book"], ["Settings", "settings"]].map(([label, icon]) => <button key={label} className={`nav-item ${navActive === label ? "active" : ""}`} aria-current={navActive === label ? "page" : undefined} aria-label={label} onClick={() => setNavActive(label as NavigationSection)}><Icon name={icon!}/><span>{label}</span></button>)}
       </nav>
       <div className="sidebar-bottom"><div className="help-card"><span className="help-led">i</span><div><strong>Need a hand?</strong><span>Router setup guide</span></div><Icon name="arrow" size={15}/></div><div className="operator-row"><div className="operator-avatar">JM</div><div className="operator-copy"><strong>Juma M.</strong><span>Location operator</span></div><button className="icon-button operator-more" aria-label="Operator menu"><Icon name="more"/></button></div></div>
     </aside>
@@ -152,8 +163,9 @@ export function Dashboard() {
       <header className="topbar"><div className="breadcrumb"><span>Locations</span><span className="crumb-slash">/</span><strong>Kijitonyama</strong></div><div className="topbar-right"><div className="sync-status"><span className={`sync-dot ${socketLive ? "live" : ""}`}/><span>{socketLive ? "Live updates" : "Demo data"}</span></div><span className="topbar-divider"/><button className="date-button"><Icon name="clock" size={15}/>{dayLabel}</button><button className="avatar-button" aria-label="Open operator profile">JM</button></div></header>
 
       <div className="content-wrap">
-        <section className="page-heading"><div><div className="overline"><span className="overline-rule"/>OPERATOR OVERVIEW</div><h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><Button variant="outline" onClick={() => window.print()}><Icon name="print" size={16}/>Print / PDF</Button><Button onClick={exportCsv}><Icon name="download" size={16}/>Export ledger</Button></div></section>
+        <section className="page-heading"><div><div className="overline"><span className="overline-rule"/>{overline}</div><h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><Button variant="outline" onClick={() => window.print()}><Icon name="print" size={16}/>Print / PDF</Button>{(navActive === "Overview" || navActive === "Sales ledger") && <Button onClick={() => exportCsv()}><Icon name="download" size={16}/>Export ledger</Button>}</div></section>
 
+        {navActive === "Overview" ? <>
         <section className="summary-grid" aria-label="Business summary">
           <article className="summary-card revenue-card"><div className="summary-top"><span className="metric-label">{period === "today" ? "TODAY'S REVENUE" : period === "week" ? "THIS WEEK" : "THIS MONTH"}</span><span className="summary-kicker verified-kicker"><span className="mini-led"/>VERIFIED</span></div><div className="revenue-line"><span className="metric-currency">TZS</span><strong className="metric-value">{money(total)}</strong><span className="delta-pill">↗ 12.8%</span></div><div className="revenue-footer"><div className="channel-split"><span><i className="split-dot mobile-dot"/>Mobile money <b>{money(channels.mobile)}</b></span><span><i className="split-dot cash-dot"/>Cash vouchers <b>{money(channels.cash)}</b></span></div><div className="period-tabs" role="group" aria-label="Revenue period">{(["today", "week", "month"] as const).map((key) => <button key={key} className={period === key ? "selected" : ""} onClick={() => setPeriod(key)}>{key === "today" ? "Day" : key === "week" ? "Week" : "Month"}</button>)}</div></div></article>
           <article className="summary-card"><div className="summary-top"><span className="metric-label">ACTIVE DEVICES</span><span className="metric-icon green-icon"><Icon name="wifi" size={17}/></span></div><div className="metric-line"><strong className="metric-value">{snapshot.summary.activeDevices.toString().padStart(2, "0")}</strong><span className="metric-context">connected now</span></div><div className="metric-foot"><span className="status-text"><span className="status-dot online-dot"/>{snapshot.summary.onlineRouters} routers online</span><span className="secondary-foot">of {snapshot.summary.routerCount}</span></div></article>
@@ -166,7 +178,7 @@ export function Dashboard() {
           <article className="panel router-panel"><div className="panel-heading"><div><h2>Router health</h2><p>{snapshot.summary.onlineRouters} of {snapshot.summary.routerCount} locations reporting</p></div><button className="text-link" onClick={() => setNavActive("Settings")}>Manage <Icon name="arrow" size={14}/></button></div><div className="router-list">{snapshot.routers.map((router) => <div className="router-row" key={router.routerId}><span className={`router-icon ${router.online ? "router-icon-online" : "router-icon-offline"}`}><Icon name="wifi" size={17}/></span><div className="router-info"><strong>{router.name}</strong><span>{router.model}</span></div><div className="router-right"><span className={`router-state ${router.online ? "is-online" : "is-offline"}`}><i/>{router.online ? "Online" : "Offline"}</span><small>{router.online ? `${router.connectedUsers} devices` : `Seen ${durationSince(router.lastSeenAt)} ago`}</small></div></div>)}</div><button className="add-router" onClick={() => setNavActive("Setup guide")}><span>+</span> Add router location</button></article>
         </section>
 
-        <section className="panel ledger-panel"><div className="panel-heading ledger-heading"><div><div className="panel-title-row"><h2>Sales ledger</h2><span className="entry-count">{filteredEntries.length} entries</span></div><p>Chronological record · running balance in TZS</p></div><div className="table-tools"><label className="search-field"><span className="search-symbol">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search ledger" aria-label="Search ledger"/><kbd>/</kbd></label><button className="square-tool" aria-label="More ledger options" onClick={exportCsv}><Icon name="more"/></button></div></div>
+        <section className="panel ledger-panel"><div className="panel-heading ledger-heading"><div><div className="panel-title-row"><h2>Sales ledger</h2><span className="entry-count">{filteredEntries.length} entries</span></div><p>Chronological record · running balance in TZS</p></div><div className="table-tools"><label className="search-field"><span className="search-symbol">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search ledger" aria-label="Search ledger"/><kbd>/</kbd></label><button className="square-tool" aria-label="More ledger options" onClick={() => exportCsv()}><Icon name="more"/></button></div></div>
           <div className="table-scroll"><table className="ledger-table"><thead><tr><th>TIME</th><th>REFERENCE</th><th>CUSTOMER / VOUCHER</th><th>PACKAGE</th><th>CHANNEL</th><th className="amount-col">AMOUNT</th><th className="balance-col">BALANCE</th></tr></thead><tbody>{filteredEntries.map((row) => <LedgerTableRow key={row.id} row={row}/>)}</tbody></table></div>
           <div className="table-footer"><span>Showing <b>{filteredEntries.length ? 1 : 0}–{filteredEntries.length}</b> of <b>{matchingEntries.length}</b> transactions</span><button className="view-all" onClick={() => setNavActive("Sales ledger")}>Open full ledger <Icon name="arrow" size={14}/></button></div>
         </section>
@@ -174,6 +186,7 @@ export function Dashboard() {
         <section className="panel sessions-panel"><div className="panel-heading sessions-heading"><div><div className="panel-title-row"><h2>Connected users</h2><span className="live-count"><i/> {snapshot.sessions.filter((session) => session.state === "active").length} active</span></div><p>Current sessions across your router locations</p></div><button className="text-link" onClick={() => setNavActive("Connected users")}>All sessions <Icon name="arrow" size={14}/></button></div>
           <div className="table-scroll"><table className="sessions-table"><thead><tr><th>DEVICE / SUBSCRIBER</th><th>ROUTER</th><th>UPTIME</th><th>LIVE RATE ↓ / ↑</th><th>DATA USED</th><th>SESSION</th><th></th></tr></thead><tbody>{snapshot.sessions.map((session) => <SessionTableRow key={session.id} session={session} routerName={snapshot.routers.find((router) => router.routerId === session.routerId)?.name ?? "—"} busy={busyMac === session.mac} onAction={runSessionAction}/>)}</tbody></table></div>
         </section>
+        </> : <WorkspaceViews view={navActive} snapshot={snapshot} query={query} onQueryChange={setQuery} onExport={exportCsv} onSessionAction={runSessionAction} busyMac={busyMac} socketLive={socketLive} lastUpdated={lastUpdated} onNavigate={setNavActive}/>}
         <footer className="page-footer"><span>Project IG <b>·</b> TZ / TZS</span><span>Last updated {shortTime(lastUpdated)} <i className={socketLive ? "footer-live" : ""}/></span></footer>
       </div>
       {notice && <div className="toast" role="status"><span className="toast-mark">✓</span>{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification"><Icon name="close" size={15}/></button></div>}
@@ -189,3 +202,7 @@ function SessionTableRow({ session, routerName, busy, onAction }: { session: Ses
   const expiringSoon = (new Date(session.expiresAt).getTime() - Date.now()) < 30 * 60_000;
   return <tr className={session.state === "paused" ? "paused-row" : ""}><td><div className="device-cell"><span className="device-icon"><Icon name="phone" size={15}/></span><div><strong>{session.subscriber}</strong><span className="mac-address">{session.mac} <i>·</i> {session.ipAddress}</span></div></div></td><td><span className="router-name-cell">{routerName.replace("-AP-", " · ")}</span></td><td><span className="uptime"><Icon name="clock" size={13}/>{durationSince(session.startedAt)}</span></td><td className="rate-cell"><span><b>↓</b> {session.downloadKbps} <i>k</i></span><span><b>↑</b> {session.uploadKbps} <i>k</i></span></td><td className="data-cell">{compactData(session.dataUsedMb)}</td><td><span className={`expiry-pill ${session.state === "paused" ? "is-paused" : expiringSoon ? "expiring" : ""}`}><i/>{session.state === "paused" ? "Paused" : remaining(session.expiresAt)}</span></td><td><div className="session-actions"><button disabled={busy} onClick={() => onAction(session, session.state === "paused" ? "resume" : "pause")} aria-label={session.state === "paused" ? "Resume session" : "Pause session"} title={session.state === "paused" ? "Resume" : "Pause"}><span>{session.state === "paused" ? "▶" : "Ⅱ"}</span></button><button disabled={busy} onClick={() => onAction(session, "extend")} aria-label="Extend session by one hour" title="Add 1 hour">+1h</button><button disabled={busy} onClick={() => onAction(session, "disconnect")} aria-label="Disconnect device" title="Disconnect"><Icon name="close" size={14}/></button></div></td></tr>;
 }
+
+
+
+
