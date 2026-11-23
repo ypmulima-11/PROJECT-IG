@@ -23,6 +23,12 @@ pnpm build
 
 Copy `apps/api/.env.example` to `apps/api/.env` to change the API port or dashboard origin.
 
+## Deploy the web app to GitHub Pages
+
+The `main` branch deploys the static web dashboard through [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). In the repository, open **Settings → Pages** and choose **GitHub Actions** as the publishing source. After the workflow succeeds, the project site is available at <https://ypmulima-11.github.io/PROJECT-IG/>.
+
+GitHub Pages serves static files, so this deployment uses the bundled sample data. Session controls change the on-page preview only, and voucher codes are preview-only; the hosted site does not run the API, database, or router integrations.
+
 ## Architecture blueprint
 
 ```mermaid
@@ -117,3 +123,4 @@ Socket.IO publishes `dashboard:snapshot` every five seconds. The fixtures use Ta
 ### PostgreSQL schema
 
 See [`database/schema.sql`](database/schema.sql). Entity relationships, operational boundaries, and migration notes are in [`docs/architecture.md`](docs/architecture.md).
+

@@ -10,12 +10,12 @@ const channels: Record<LedgerRow["channel"], string> = { mpesa: "M-Pesa", airtel
 const formatMoney = (value: number) => new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(value);
 const formatData = (mb: number) => mb >= 1_000 ? `${(mb / 1_000).toFixed(2)} GB` : `${Math.round(mb)} MB`;
 const formatDate = (value: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Dar_es_Salaam", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value));
-const elapsed = (value: string) => {
-  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60_000));
+const elapsed = (value: string, referenceTime = Date.now()) => {
+  const minutes = Math.max(0, Math.floor((referenceTime - Date.parse(value)) / 60_000));
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
-const sessionRemaining = (value: string) => {
-  const minutes = Math.ceil((Date.parse(value) - Date.now()) / 60_000);
+const sessionRemaining = (value: string, referenceTime = Date.now()) => {
+  const minutes = Math.ceil((Date.parse(value) - referenceTime) / 60_000);
   if (minutes <= 0) return "Expired";
   return minutes < 60 ? `${minutes}m left` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
@@ -74,9 +74,10 @@ function SalesLedger({ snapshot, query, onQueryChange, onExport }: WorkspaceView
   </div>;
 }
 
-function ConnectedUsers({ snapshot, onSessionAction, busyMac }: WorkspaceViewsProps) {
+function ConnectedUsers({ snapshot, onSessionAction, busyMac, lastUpdated }: WorkspaceViewsProps) {
   const [search, setSearch] = useState("");
   const [routerId, setRouterId] = useState("all");
+  const now = lastUpdated.getTime();
   const sessions = snapshot.sessions.filter((session) => {
     const matchesSearch = !search || `${session.subscriber} ${session.mac} ${session.ipAddress} ${session.planName}`.toLowerCase().includes(search.toLowerCase());
     return matchesSearch && (routerId === "all" || session.routerId === routerId);
@@ -94,7 +95,7 @@ function ConnectedUsers({ snapshot, onSessionAction, busyMac }: WorkspaceViewsPr
       <div className="panel-heading sessions-heading workspace-sessions-heading"><div><div className="panel-title-row"><h2>Live sessions</h2><span className="live-count"><i/> {activeCount} active</span></div><p>Inspect a device and manage its current access session.</p></div>
         <div className="session-filters"><div className="search-field"><span className="search-symbol">⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search users or devices" aria-label="Search connected users"/><button type="button" className="clear-search" onClick={() => setSearch("")} aria-label="Clear search">×</button></div><select value={routerId} onChange={(event) => setRouterId(event.target.value)} aria-label="Filter by router"><option value="all">All routers</option>{snapshot.routers.map((router) => <option key={router.routerId} value={router.routerId}>{router.name}</option>)}</select></div>
       </div>
-      <div className="table-scroll"><table className="sessions-table workspace-sessions-table"><thead><tr><th>DEVICE / SUBSCRIBER</th><th>ROUTER</th><th>UPTIME</th><th>LIVE RATE ↓ / ↑</th><th>DATA USED</th><th>SESSION</th><th>ACTIONS</th></tr></thead><tbody>{sessions.map((session) => <SessionRow key={session.id} session={session} routerName={snapshot.routers.find((router) => router.routerId === session.routerId)?.name ?? "Unknown router"} busy={busyMac === session.mac} onAction={onSessionAction}/>)}</tbody></table>
+      <div className="table-scroll"><table className="sessions-table workspace-sessions-table"><thead><tr><th>DEVICE / SUBSCRIBER</th><th>ROUTER</th><th>UPTIME</th><th>LIVE RATE ↓ / ↑</th><th>DATA USED</th><th>SESSION</th><th>ACTIONS</th></tr></thead><tbody>{sessions.map((session) => <SessionRow key={session.id} session={session} routerName={snapshot.routers.find((router) => router.routerId === session.routerId)?.name ?? "Unknown router"} busy={busyMac === session.mac} now={now} onAction={onSessionAction}/>)}</tbody></table>
         {sessions.length === 0 && <div className="empty-state"><strong>No connected users found</strong><span>Try a different device, subscriber, or router filter.</span></div>}
       </div>
       <div className="table-footer"><span>Showing <b>{sessions.length}</b> of <b>{snapshot.sessions.length}</b> sessions</span><span>Actions are sent to the API when connected.</span></div>
@@ -103,9 +104,9 @@ function ConnectedUsers({ snapshot, onSessionAction, busyMac }: WorkspaceViewsPr
   </div>;
 }
 
-function SessionRow({ session, routerName, busy, onAction }: { session: SessionRow; routerName: string; busy: boolean; onAction: (session: SessionRow, action: SessionAction) => void }) {
-  const expiring = Date.parse(session.expiresAt) - Date.now() < 30 * 60_000;
-  return <tr className={session.state === "paused" ? "paused-row" : ""}><td><div className="device-cell"><span className="device-icon">⌕</span><div><strong>{session.subscriber}</strong><span className="mac-address">{session.mac} · {session.ipAddress}</span></div></div></td><td><span className="router-name-cell">{routerName.replace("-AP-", " · ")}</span></td><td><span className="uptime">{elapsed(session.startedAt)}</span></td><td><span className="rate-cell"><span>↓ {session.downloadKbps} kbps</span><span>↑ {session.uploadKbps} kbps</span></span></td><td className="data-cell">{formatData(session.dataUsedMb)}</td><td><span className={`expiry-pill ${session.state === "paused" ? "is-paused" : expiring ? "expiring" : ""}`}><i/>{session.state === "paused" ? "Paused" : sessionRemaining(session.expiresAt)}</span></td><td><div className="session-actions visible-actions"><button disabled={busy} onClick={() => onAction(session, session.state === "paused" ? "resume" : "pause")} title={session.state === "paused" ? "Resume" : "Pause"}>{session.state === "paused" ? "Resume" : "Pause"}</button><button disabled={busy} onClick={() => onAction(session, "extend")} title="Extend session by one hour">+1h</button><button disabled={busy} onClick={() => onAction(session, "disconnect")} title="Disconnect device">End</button></div></td></tr>;
+function SessionRow({ session, routerName, busy, now, onAction }: { session: SessionRow; routerName: string; busy: boolean; now: number; onAction: (session: SessionRow, action: SessionAction) => void }) {
+  const expiring = Date.parse(session.expiresAt) - now < 30 * 60_000;
+  return <tr className={session.state === "paused" ? "paused-row" : ""}><td><div className="device-cell"><span className="device-icon">⌕</span><div><strong>{session.subscriber}</strong><span className="mac-address">{session.mac} · {session.ipAddress}</span></div></div></td><td><span className="router-name-cell">{routerName.replace("-AP-", " · ")}</span></td><td><span className="uptime">{elapsed(session.startedAt, now)}</span></td><td><span className="rate-cell"><span>↓ {session.downloadKbps} kbps</span><span>↑ {session.uploadKbps} kbps</span></span></td><td className="data-cell">{formatData(session.dataUsedMb)}</td><td><span className={`expiry-pill ${session.state === "paused" ? "is-paused" : expiring ? "expiring" : ""}`}><i/>{session.state === "paused" ? "Paused" : sessionRemaining(session.expiresAt, now)}</span></td><td><div className="session-actions visible-actions"><button disabled={busy} onClick={() => onAction(session, session.state === "paused" ? "resume" : "pause")} title={session.state === "paused" ? "Resume" : "Pause"}>{session.state === "paused" ? "Resume" : "Pause"}</button><button disabled={busy} onClick={() => onAction(session, "extend")} title="Extend session by one hour">+1h</button><button disabled={busy} onClick={() => onAction(session, "disconnect")} title="Disconnect device">End</button></div></td></tr>;
 }
 
 const plans = [
@@ -200,7 +201,7 @@ function SettingsView({ snapshot, socketLive, lastUpdated, onNavigate }: Workspa
       <section className="panel workspace-card"><span className="panel-kicker">WORKSPACE</span><h2>Project IG operations</h2><p className="settings-description">A local hotspot operations workspace configured for Tanzanian shillings and East Africa Time.</p><div className="settings-detail-list"><div><span>Primary location</span><strong>Kijitonyama</strong></div><div><span>Currency</span><strong>TZS · Tanzanian shilling</strong></div><div><span>Time zone</span><strong>Africa / Dar es Salaam</strong></div><div><span>Web data</span><strong>{socketLive ? "Live API connection" : "Demo snapshot"}</strong></div><div><span>Last update</span><strong>{new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Dar_es_Salaam", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(lastUpdated)}</strong></div></div></section>
       <section className="panel workspace-card connection-card"><span className="panel-kicker">SERVICE CONNECTIONS</span><h2>System status</h2><div className="connection-row"><span className={`connection-icon ${socketLive ? "connection-good" : "connection-wait"}`}>↔</span><div><strong>Realtime dashboard</strong><span>{socketLive ? "Connected through Socket.IO" : "Showing sample data while the API is unavailable"}</span></div><b className={socketLive ? "connection-status-good" : "connection-status-wait"}>{socketLive ? "LIVE" : "DEMO"}</b></div><div className="connection-row"><span className="connection-icon connection-wait">▦</span><div><strong>Router locations</strong><span>{snapshot.summary.onlineRouters} online of {snapshot.summary.routerCount} configured</span></div><b className="connection-status-wait">{snapshot.summary.routerCount - snapshot.summary.onlineRouters ? "CHECK" : "OK"}</b></div><button className="button button-outline settings-guide-button" onClick={() => onNavigate("Setup guide")}>Open router setup guide →</button></section>
     </div>
-    <section className="panel workspace-panel settings-router-panel"><div className="panel-heading"><div><h2>Router locations</h2><p>Connection health reported by the active data source</p></div><button className="text-link" onClick={() => onNavigate("Setup guide")}>Add location guide →</button></div><div className="router-settings-list">{snapshot.routers.map((router) => <div className="router-settings-row" key={router.routerId}><span className={`router-icon ${router.online ? "router-icon-online" : "router-icon-offline"}`}>⌁</span><div className="router-settings-name"><strong>{router.name}</strong><span>{router.routerId} · {router.model}</span></div><div className="router-settings-users">{router.connectedUsers} connected</div><span className={`router-state ${router.online ? "is-online" : "is-offline"}`}><i/>{router.online ? "Online" : `Seen ${elapsed(router.lastSeenAt)} ago`}</span></div>)}</div></section>
+    <section className="panel workspace-panel settings-router-panel"><div className="panel-heading"><div><h2>Router locations</h2><p>Connection health reported by the active data source</p></div><button className="text-link" onClick={() => onNavigate("Setup guide")}>Add location guide →</button></div><div className="router-settings-list">{snapshot.routers.map((router) => <div className="router-settings-row" key={router.routerId}><span className={`router-icon ${router.online ? "router-icon-online" : "router-icon-offline"}`}>⌁</span><div className="router-settings-name"><strong>{router.name}</strong><span>{router.routerId} · {router.model}</span></div><div className="router-settings-users">{router.connectedUsers} connected</div><span className={`router-state ${router.online ? "is-online" : "is-offline"}`}><i/>{router.online ? "Online" : `Seen ${elapsed(router.lastSeenAt, lastUpdated.getTime())} ago`}</span></div>)}</div></section>
     <div className="workspace-note"><span className="note-dot"/> Router credentials and payment provider secrets are managed by the API environment.</div>
   </div>;
 }

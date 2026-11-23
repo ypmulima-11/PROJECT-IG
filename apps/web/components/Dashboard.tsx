@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { demoSnapshot } from "@/lib/demo-data";
 import type { Channel, DashboardSnapshot, LedgerRow, SessionRow } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { WorkspaceViews, type WorkspaceView } from "@/components/WorkspaceViews";
 
 type NavigationSection = "Overview" | WorkspaceView;
+const isStaticDemo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 const money = (amount: number) => new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(amount);
 const compactData = (mb: number) => mb >= 1_000 ? `${(mb / 1_000).toFixed(2)} GB` : `${Math.round(mb)} MB`;
@@ -56,31 +56,32 @@ function TrafficChart({ points }: { points: number[] }) {
   </div>;
 }
 
-function durationSince(value: string) {
-  const mins = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
+function durationSince(value: string, referenceTime = Date.now()) {
+  const mins = Math.max(0, Math.floor((referenceTime - new Date(value).getTime()) / 60_000));
   if (mins < 60) return `${mins}m`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
-function remaining(value: string) {
-  const mins = Math.ceil((new Date(value).getTime() - Date.now()) / 60_000);
+function remaining(value: string, referenceTime = Date.now()) {
+  const mins = Math.ceil((new Date(value).getTime() - referenceTime) / 60_000);
   if (mins <= 0) return "Expired";
   if (mins < 60) return `${mins}m left`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-export function Dashboard() {
-  const [snapshot, setSnapshot] = useState<DashboardSnapshot>(demoSnapshot);
+export function Dashboard({ initialSnapshot, initialUpdatedAt }: { initialSnapshot: DashboardSnapshot; initialUpdatedAt: string }) {
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [period, setPeriod] = useState<"today" | "week" | "month">("today");
   const [query, setQuery] = useState("");
   const [socketLive, setSocketLive] = useState(false);
   const [notice, setNotice] = useState("");
   const [navActive, setNavActive] = useState<NavigationSection>("Overview");
   const [busyMac, setBusyMac] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [lastUpdated, setLastUpdated] = useState(() => new Date(initialUpdatedAt));
   const apiBase = typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:4000` : "http://localhost:4000";
 
   const applySnapshot = useCallback((next: DashboardSnapshot) => { setSnapshot(next); setLastUpdated(new Date()); }, []);
   useEffect(() => {
+    if (isStaticDemo) return;
     let socket: Socket | undefined;
     const load = async () => {
       try { const response = await fetch("/api/dashboard", { cache: "no-store" }); if (response.ok) applySnapshot(await response.json() as DashboardSnapshot); }
@@ -108,6 +109,29 @@ export function Dashboard() {
 
   const runSessionAction = async (session: SessionRow, action: "disconnect" | "pause" | "resume" | "extend") => {
     setBusyMac(session.mac); setNotice("");
+    if (isStaticDemo) {
+      const demoLabels: Record<typeof action, string> = {
+        disconnect: "Device removed from this preview",
+        pause: "Session paused in this preview",
+        resume: "Session resumed in this preview",
+        extend: "Session extended by one hour in this preview",
+      };
+      setSnapshot((current) => {
+        const sessions = action === "disconnect"
+          ? current.sessions.filter((item) => item.mac !== session.mac)
+          : current.sessions.map((item) => item.mac === session.mac
+            ? {
+                ...item,
+                state: action === "pause" ? "paused" : action === "resume" ? "active" : item.state,
+                expiresAt: action === "extend" ? new Date(new Date(item.expiresAt).getTime() + 60 * 60_000).toISOString() : item.expiresAt,
+              }
+            : item);
+        return { ...current, sessions, summary: { ...current.summary, activeDevices: sessions.filter((item) => item.state === "active").length } };
+      });
+      setLastUpdated(new Date()); setBusyMac(null); setNotice(demoLabels[action]);
+      window.setTimeout(() => setNotice(""), 3_500);
+      return;
+    }
     const label: Record<typeof action, string> = { disconnect: "Device disconnected", pause: "Session paused", resume: "Session resumed", extend: "Session extended by one hour" };
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(session.mac)}/${action}`, {
@@ -131,7 +155,7 @@ export function Dashboard() {
     const link = document.createElement("a"); link.href = url; link.download = `project-ig-ledger-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
   };
 
-  const periodDate = new Date();
+  const periodDate = lastUpdated;
   const dayLabel = periodDate.toLocaleDateString("en-GB", { timeZone: "Africa/Dar_es_Salaam", weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const pageCopy: Record<NavigationSection, { title: string; subtitle: string; overline: string }> = {
     Overview: { title: "Daily ledger", subtitle: "Sales, sessions, and router health in one place.", overline: "OPERATOR OVERVIEW" },
@@ -175,7 +199,7 @@ export function Dashboard() {
 
         <section className="insight-grid">
           <article className="panel traffic-panel"><div className="panel-heading"><div><div className="panel-title-row"><h2>Bandwidth by hour</h2><span className="panel-live"><span className="mini-led"/>LIVE</span></div><p>Combined traffic across all router locations</p></div><button className="select-button">Today <span>⌄</span></button></div><TrafficChart points={snapshot.trafficByHour}/><div className="chart-legend"><span><i className="legend-mark"/>Total traffic</span><span className="chart-note">Peak <strong>81 Mbps</strong> · 16:00</span></div></article>
-          <article className="panel router-panel"><div className="panel-heading"><div><h2>Router health</h2><p>{snapshot.summary.onlineRouters} of {snapshot.summary.routerCount} locations reporting</p></div><button className="text-link" onClick={() => setNavActive("Settings")}>Manage <Icon name="arrow" size={14}/></button></div><div className="router-list">{snapshot.routers.map((router) => <div className="router-row" key={router.routerId}><span className={`router-icon ${router.online ? "router-icon-online" : "router-icon-offline"}`}><Icon name="wifi" size={17}/></span><div className="router-info"><strong>{router.name}</strong><span>{router.model}</span></div><div className="router-right"><span className={`router-state ${router.online ? "is-online" : "is-offline"}`}><i/>{router.online ? "Online" : "Offline"}</span><small>{router.online ? `${router.connectedUsers} devices` : `Seen ${durationSince(router.lastSeenAt)} ago`}</small></div></div>)}</div><button className="add-router" onClick={() => setNavActive("Setup guide")}><span>+</span> Add router location</button></article>
+          <article className="panel router-panel"><div className="panel-heading"><div><h2>Router health</h2><p>{snapshot.summary.onlineRouters} of {snapshot.summary.routerCount} locations reporting</p></div><button className="text-link" onClick={() => setNavActive("Settings")}>Manage <Icon name="arrow" size={14}/></button></div><div className="router-list">{snapshot.routers.map((router) => <div className="router-row" key={router.routerId}><span className={`router-icon ${router.online ? "router-icon-online" : "router-icon-offline"}`}><Icon name="wifi" size={17}/></span><div className="router-info"><strong>{router.name}</strong><span>{router.model}</span></div><div className="router-right"><span className={`router-state ${router.online ? "is-online" : "is-offline"}`}><i/>{router.online ? "Online" : "Offline"}</span><small>{router.online ? `${router.connectedUsers} devices` : `Seen ${durationSince(router.lastSeenAt, lastUpdated.getTime())} ago`}</small></div></div>)}</div><button className="add-router" onClick={() => setNavActive("Setup guide")}><span>+</span> Add router location</button></article>
         </section>
 
         <section className="panel ledger-panel"><div className="panel-heading ledger-heading"><div><div className="panel-title-row"><h2>Sales ledger</h2><span className="entry-count">{filteredEntries.length} entries</span></div><p>Chronological record · running balance in TZS</p></div><div className="table-tools"><label className="search-field"><span className="search-symbol">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search ledger" aria-label="Search ledger"/><kbd>/</kbd></label><button className="square-tool" aria-label="More ledger options" onClick={() => exportCsv()}><Icon name="more"/></button></div></div>
@@ -184,7 +208,7 @@ export function Dashboard() {
         </section>
 
         <section className="panel sessions-panel"><div className="panel-heading sessions-heading"><div><div className="panel-title-row"><h2>Connected users</h2><span className="live-count"><i/> {snapshot.sessions.filter((session) => session.state === "active").length} active</span></div><p>Current sessions across your router locations</p></div><button className="text-link" onClick={() => setNavActive("Connected users")}>All sessions <Icon name="arrow" size={14}/></button></div>
-          <div className="table-scroll"><table className="sessions-table"><thead><tr><th>DEVICE / SUBSCRIBER</th><th>ROUTER</th><th>UPTIME</th><th>LIVE RATE ↓ / ↑</th><th>DATA USED</th><th>SESSION</th><th></th></tr></thead><tbody>{snapshot.sessions.map((session) => <SessionTableRow key={session.id} session={session} routerName={snapshot.routers.find((router) => router.routerId === session.routerId)?.name ?? "—"} busy={busyMac === session.mac} onAction={runSessionAction}/>)}</tbody></table></div>
+          <div className="table-scroll"><table className="sessions-table"><thead><tr><th>DEVICE / SUBSCRIBER</th><th>ROUTER</th><th>UPTIME</th><th>LIVE RATE ↓ / ↑</th><th>DATA USED</th><th>SESSION</th><th></th></tr></thead><tbody>{snapshot.sessions.map((session) => <SessionTableRow key={session.id} session={session} routerName={snapshot.routers.find((router) => router.routerId === session.routerId)?.name ?? "—"} busy={busyMac === session.mac} now={lastUpdated.getTime()} onAction={runSessionAction}/>)}</tbody></table></div>
         </section>
         </> : <WorkspaceViews view={navActive} snapshot={snapshot} query={query} onQueryChange={setQuery} onExport={exportCsv} onSessionAction={runSessionAction} busyMac={busyMac} socketLive={socketLive} lastUpdated={lastUpdated} onNavigate={setNavActive}/>}
         <footer className="page-footer"><span>Project IG <b>·</b> TZ / TZS</span><span>Last updated {shortTime(lastUpdated)} <i className={socketLive ? "footer-live" : ""}/></span></footer>
@@ -198,9 +222,9 @@ function LedgerTableRow({ row }: { row: LedgerRow }) {
   return <tr><td className="time-cell">{timeOf(row.occurredAt)}</td><td><span className="reference-code">{row.reference}</span></td><td className="customer-cell">{row.customerLabel}</td><td className="package-cell">{row.packageName}</td><td><span className={`channel-tag channel-${row.channel}`}>{row.channel === "cash_voucher" ? <span className="cash-square">T</span> : <span className="channel-initial">{channelLabels[row.channel].slice(0, 1)}</span>}{channelLabels[row.channel]}</span></td><td className="amount-cell">{money(row.amountTzs)} <small>TZS</small></td><td className="balance-cell">{money(row.balanceTzs)}</td></tr>;
 }
 
-function SessionTableRow({ session, routerName, busy, onAction }: { session: SessionRow; routerName: string; busy: boolean; onAction: (session: SessionRow, action: "disconnect" | "pause" | "resume" | "extend") => void }) {
-  const expiringSoon = (new Date(session.expiresAt).getTime() - Date.now()) < 30 * 60_000;
-  return <tr className={session.state === "paused" ? "paused-row" : ""}><td><div className="device-cell"><span className="device-icon"><Icon name="phone" size={15}/></span><div><strong>{session.subscriber}</strong><span className="mac-address">{session.mac} <i>·</i> {session.ipAddress}</span></div></div></td><td><span className="router-name-cell">{routerName.replace("-AP-", " · ")}</span></td><td><span className="uptime"><Icon name="clock" size={13}/>{durationSince(session.startedAt)}</span></td><td className="rate-cell"><span><b>↓</b> {session.downloadKbps} <i>k</i></span><span><b>↑</b> {session.uploadKbps} <i>k</i></span></td><td className="data-cell">{compactData(session.dataUsedMb)}</td><td><span className={`expiry-pill ${session.state === "paused" ? "is-paused" : expiringSoon ? "expiring" : ""}`}><i/>{session.state === "paused" ? "Paused" : remaining(session.expiresAt)}</span></td><td><div className="session-actions"><button disabled={busy} onClick={() => onAction(session, session.state === "paused" ? "resume" : "pause")} aria-label={session.state === "paused" ? "Resume session" : "Pause session"} title={session.state === "paused" ? "Resume" : "Pause"}><span>{session.state === "paused" ? "▶" : "Ⅱ"}</span></button><button disabled={busy} onClick={() => onAction(session, "extend")} aria-label="Extend session by one hour" title="Add 1 hour">+1h</button><button disabled={busy} onClick={() => onAction(session, "disconnect")} aria-label="Disconnect device" title="Disconnect"><Icon name="close" size={14}/></button></div></td></tr>;
+function SessionTableRow({ session, routerName, busy, now, onAction }: { session: SessionRow; routerName: string; busy: boolean; now: number; onAction: (session: SessionRow, action: "disconnect" | "pause" | "resume" | "extend") => void }) {
+  const expiringSoon = (new Date(session.expiresAt).getTime() - now) < 30 * 60_000;
+  return <tr className={session.state === "paused" ? "paused-row" : ""}><td><div className="device-cell"><span className="device-icon"><Icon name="phone" size={15}/></span><div><strong>{session.subscriber}</strong><span className="mac-address">{session.mac} <i>·</i> {session.ipAddress}</span></div></div></td><td><span className="router-name-cell">{routerName.replace("-AP-", " · ")}</span></td><td><span className="uptime"><Icon name="clock" size={13}/>{durationSince(session.startedAt, now)}</span></td><td className="rate-cell"><span><b>↓</b> {session.downloadKbps} <i>k</i></span><span><b>↑</b> {session.uploadKbps} <i>k</i></span></td><td className="data-cell">{compactData(session.dataUsedMb)}</td><td><span className={`expiry-pill ${session.state === "paused" ? "is-paused" : expiringSoon ? "expiring" : ""}`}><i/>{session.state === "paused" ? "Paused" : remaining(session.expiresAt, now)}</span></td><td><div className="session-actions"><button disabled={busy} onClick={() => onAction(session, session.state === "paused" ? "resume" : "pause")} aria-label={session.state === "paused" ? "Resume session" : "Pause session"} title={session.state === "paused" ? "Resume" : "Pause"}><span>{session.state === "paused" ? "▶" : "Ⅱ"}</span></button><button disabled={busy} onClick={() => onAction(session, "extend")} aria-label="Extend session by one hour" title="Add 1 hour">+1h</button><button disabled={busy} onClick={() => onAction(session, "disconnect")} aria-label="Disconnect device" title="Disconnect"><Icon name="close" size={14}/></button></div></td></tr>;
 }
 
 
