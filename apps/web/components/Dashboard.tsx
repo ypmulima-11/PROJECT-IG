@@ -8,6 +8,7 @@ import { WorkspaceViews, type WorkspaceView } from "@/components/WorkspaceViews"
 
 type NavigationSection = "Overview" | WorkspaceView;
 const isStaticDemo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+const demoStorageKey = "project-ig-dashboard-v1";
 
 const money = (amount: number) => new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(amount);
 const compactData = (mb: number) => mb >= 1_000 ? `${(mb / 1_000).toFixed(2)} GB` : `${Math.round(mb)} MB`;
@@ -70,6 +71,7 @@ function remaining(value: string, referenceTime = Date.now()) {
 
 export function Dashboard({ initialSnapshot, initialUpdatedAt }: { initialSnapshot: DashboardSnapshot; initialUpdatedAt: string }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
+  const [demoReady, setDemoReady] = useState(!isStaticDemo);
   const [period, setPeriod] = useState<"today" | "week" | "month">("today");
   const [query, setQuery] = useState("");
   const [socketLive, setSocketLive] = useState(false);
@@ -80,6 +82,26 @@ export function Dashboard({ initialSnapshot, initialUpdatedAt }: { initialSnapsh
   const apiBase = typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:4000` : "http://localhost:4000";
 
   const applySnapshot = useCallback((next: DashboardSnapshot) => { setSnapshot(next); setLastUpdated(new Date()); }, []);
+  useEffect(() => {
+    if (!isStaticDemo) return;
+    try {
+      const stored = localStorage.getItem(demoStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored) as { snapshot?: DashboardSnapshot; updatedAt?: string };
+        const saved = parsed.snapshot;
+        if (saved && saved.summary && Array.isArray(saved.entries) && Array.isArray(saved.sessions) && Array.isArray(saved.routers) && Array.isArray(saved.trafficByHour)) {
+          setSnapshot(saved);
+          if (parsed.updatedAt && Number.isFinite(Date.parse(parsed.updatedAt))) setLastUpdated(new Date(parsed.updatedAt));
+        }
+      }
+    } catch { /* Ignore unavailable storage or an older saved preview. */ }
+    setDemoReady(true);
+  }, []);
+  useEffect(() => {
+    if (!isStaticDemo || !demoReady) return;
+    try { localStorage.setItem(demoStorageKey, JSON.stringify({ snapshot, updatedAt: lastUpdated.toISOString() })); }
+    catch { /* The dashboard remains usable when browser storage is full or disabled. */ }
+  }, [demoReady, lastUpdated, snapshot]);
   useEffect(() => {
     if (isStaticDemo) return;
     let socket: Socket | undefined;
