@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { DashboardSnapshot, LedgerRow, SessionRow } from "@/lib/types";
 
 export type WorkspaceView = "Sales ledger" | "Connected users" | "Vouchers & plans" | "Traffic reports" | "Setup guide" | "Settings";
@@ -109,45 +109,144 @@ function SessionRow({ session, routerName, busy, now, onAction }: { session: Ses
   return <tr className={session.state === "paused" ? "paused-row" : ""}><td><div className="device-cell"><span className="device-icon">⌕</span><div><strong>{session.subscriber}</strong><span className="mac-address">{session.mac} · {session.ipAddress}</span></div></div></td><td><span className="router-name-cell">{routerName.replace("-AP-", " · ")}</span></td><td><span className="uptime">{elapsed(session.startedAt, now)}</span></td><td><span className="rate-cell"><span>↓ {session.downloadKbps} kbps</span><span>↑ {session.uploadKbps} kbps</span></span></td><td className="data-cell">{formatData(session.dataUsedMb)}</td><td><span className={`expiry-pill ${session.state === "paused" ? "is-paused" : expiring ? "expiring" : ""}`}><i/>{session.state === "paused" ? "Paused" : sessionRemaining(session.expiresAt, now)}</span></td><td><div className="session-actions visible-actions"><button disabled={busy} onClick={() => onAction(session, session.state === "paused" ? "resume" : "pause")} title={session.state === "paused" ? "Resume" : "Pause"}>{session.state === "paused" ? "Resume" : "Pause"}</button><button disabled={busy} onClick={() => onAction(session, "extend")} title="Extend session by one hour">+1h</button><button disabled={busy} onClick={() => onAction(session, "disconnect")} title="Disconnect device">End</button></div></td></tr>;
 }
 
-const plans = [
-  { name: "Saa Moja", duration: "1 hour", price: 300, description: "Quick browsing" },
-  { name: "Saa Mbili", duration: "2 hours", price: 500, description: "Short stay" },
-  { name: "Kila Siku", duration: "24 hours", price: 1_000, description: "Day pass" },
-  { name: "Wiki", duration: "7 days", price: 5_000, description: "Weekly access" },
+interface AccessPlan {
+  id: string;
+  name: string;
+  durationHours: number;
+  price: number;
+  description: string;
+  dataLimitMb: number | null;
+  speedLimitMbps: number | null;
+  custom: boolean;
+}
+
+interface VoucherBatch {
+  codes: string[];
+  plan: AccessPlan;
+  createdAt: string;
+}
+
+const defaultPlans: AccessPlan[] = [
+  { id: "saa-moja", name: "Saa Moja", durationHours: 1, price: 300, description: "Quick browsing", dataLimitMb: null, speedLimitMbps: null, custom: false },
+  { id: "saa-mbili", name: "Saa Mbili", durationHours: 2, price: 500, description: "Short stay", dataLimitMb: null, speedLimitMbps: null, custom: false },
+  { id: "kila-siku", name: "Kila Siku", durationHours: 24, price: 1_000, description: "Day pass", dataLimitMb: null, speedLimitMbps: null, custom: false },
+  { id: "wiki", name: "Wiki", durationHours: 168, price: 5_000, description: "Weekly access", dataLimitMb: null, speedLimitMbps: null, custom: false },
 ];
+const voucherStorageKey = "project-ig-vouchers-v1";
+const durationLabel = (hours: number) => hours % 24 === 0 ? `${hours / 24} ${hours === 24 ? "day" : "days"}` : `${hours} ${hours === 1 ? "hour" : "hours"}`;
+const isAccessPlan = (value: unknown): value is AccessPlan => {
+  if (!value || typeof value !== "object") return false;
+  const plan = value as Partial<AccessPlan>;
+  return typeof plan.id === "string" && typeof plan.name === "string" && typeof plan.durationHours === "number" && typeof plan.price === "number" && typeof plan.description === "string" && typeof plan.custom === "boolean";
+};
+const csvCell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
 
 function VouchersAndPlans() {
-  const [planName, setPlanName] = useState(plans[0]!.name);
+  const [planList, setPlanList] = useState(defaultPlans);
+  const [selectedPlanId, setSelectedPlanId] = useState(defaultPlans[0]!.id);
   const [count, setCount] = useState(10);
-  const [codes, setCodes] = useState<string[]>([]);
+  const [batch, setBatch] = useState<VoucherBatch | null>(null);
   const [message, setMessage] = useState("");
-  const selectedPlan = plans.find((plan) => plan.name === planName) ?? plans[0]!;
+  const [storageReady, setStorageReady] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [draft, setDraft] = useState({ name: "", description: "", durationHours: "24", price: "1000", dataLimitMb: "", speedLimitMbps: "" });
+  const selectedPlan = planList.find((plan) => plan.id === selectedPlanId) ?? planList[0]!;
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(voucherStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as { plans?: unknown; selectedPlanId?: unknown; batch?: unknown };
+        if (Array.isArray(parsed.plans) && parsed.plans.every(isAccessPlan) && parsed.plans.length) setPlanList(parsed.plans);
+        if (typeof parsed.selectedPlanId === "string") setSelectedPlanId(parsed.selectedPlanId);
+        if (parsed.batch && typeof parsed.batch === "object") {
+          const savedBatch = parsed.batch as Partial<VoucherBatch>;
+          if (Array.isArray(savedBatch.codes) && savedBatch.codes.every((code) => typeof code === "string") && savedBatch.plan && isAccessPlan(savedBatch.plan)) setBatch(savedBatch as VoucherBatch);
+        }
+      }
+    } catch { /* Ignore unavailable storage or invalid saved preview data. */ }
+    setStorageReady(true);
+  }, []);
+  useEffect(() => {
+    if (!storageReady) return;
+    try { localStorage.setItem(voucherStorageKey, JSON.stringify({ plans: planList, selectedPlanId, batch })); }
+    catch { /* Keep the preview usable if browser storage is disabled. */ }
+  }, [batch, planList, selectedPlanId, storageReady]);
+
+  const createPlan = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = draft.name.trim();
+    if (planList.some((plan) => plan.name.toLowerCase() === name.toLowerCase())) {
+      setMessage("A plan with that name already exists.");
+      return;
+    }
+    const plan: AccessPlan = {
+      id: `custom-${Date.now()}`,
+      name,
+      description: draft.description.trim() || "Custom access",
+      durationHours: Number(draft.durationHours),
+      price: Number(draft.price),
+      dataLimitMb: draft.dataLimitMb ? Number(draft.dataLimitMb) : null,
+      speedLimitMbps: draft.speedLimitMbps ? Number(draft.speedLimitMbps) : null,
+      custom: true,
+    };
+    setPlanList((current) => [...current, plan]);
+    setSelectedPlanId(plan.id);
+    setDraft({ name: "", description: "", durationHours: "24", price: "1000", dataLimitMb: "", speedLimitMbps: "" });
+    setCreateOpen(false);
+    setMessage(`${plan.name} added to this browser's plan list.`);
+  };
+  const removePlan = (id: string) => {
+    const remainingPlans = planList.filter((plan) => plan.id !== id);
+    setPlanList(remainingPlans);
+    if (selectedPlanId === id) setSelectedPlanId(remainingPlans[0]!.id);
+    setMessage("Custom plan removed from this browser.");
+  };
   const generate = () => {
     const next = Array.from({ length: count }, () => {
-      const bytes = new Uint8Array(4);
+      const bytes = new Uint8Array(5);
       if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(bytes);
       else bytes.forEach((_, index) => { bytes[index] = Math.floor(Math.random() * 256); });
       return `IG-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
     });
-    setCodes(next); setMessage(`${next.length} preview codes created for ${selectedPlan.name}.`);
+    setBatch({ codes: next, plan: selectedPlan, createdAt: new Date().toISOString() });
+    setMessage(`${next.length} preview codes created for ${selectedPlan.name}.`);
   };
   const download = () => {
-    if (!codes.length) return;
-    const text = ["Voucher code,Plan,Duration,Price TZS", ...codes.map((code) => `${code},${selectedPlan.name},${selectedPlan.duration},${selectedPlan.price}`)].join("\r\n");
-    const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = "project-ig-voucher-preview.csv"; link.click(); URL.revokeObjectURL(url);
+    if (!batch) return;
+    const header = ["Voucher code", "Plan", "Duration", "Price TZS", "Data limit MB", "Speed limit Mbps"];
+    const rows = batch.codes.map((code) => [code, batch.plan.name, durationLabel(batch.plan.durationHours), String(batch.plan.price), batch.plan.dataLimitMb ? String(batch.plan.dataLimitMb) : "", batch.plan.speedLimitMbps ? String(batch.plan.speedLimitMbps) : ""]);
+    const csv = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "project-ig-voucher-preview.csv"; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
+
   return <div className="workspace-view">
-    <div className="preview-banner"><span className="preview-banner-icon">i</span><div><strong>Voucher preview</strong><span>Codes are generated in this browser for the web prototype. They are not saved or activated on a router.</span></div></div>
-    <section className="plan-grid" aria-label="Hotspot plans">{plans.map((plan) => <article className={`plan-card ${plan.name === planName ? "plan-card-selected" : ""}`} key={plan.name}><div className="plan-card-top"><span className="plan-icon">◷</span><span className="plan-description">{plan.description}</span></div><h2>{plan.name}</h2><p>{plan.duration} access</p><div className="plan-price"><strong>{formatMoney(plan.price)}</strong><span>TZS</span></div><button className="text-link" onClick={() => setPlanName(plan.name)}>Use this plan <span>→</span></button></article>)}</section>
+    <div className="preview-banner"><span className="preview-banner-icon">i</span><div><strong>Browser-only preview</strong><span>Plans and voucher batches are saved in this browser only. Codes are not activated on a router or shared with another operator.</span></div></div>
+    <section className="plan-section" aria-label="Hotspot plans">
+      <div className="plan-section-heading"><div><h2>Access plans</h2><p>Set the access time, TZS price, and optional limits.</p></div><button className="button button-outline" type="button" onClick={() => setCreateOpen((open) => !open)} aria-expanded={createOpen}>{createOpen ? "Close form" : "+ Add access plan"}</button></div>
+      {createOpen && <form className="panel workspace-card plan-editor-form" onSubmit={createPlan}>
+        <div className="plan-editor-heading"><div><span className="panel-kicker">NEW ACCESS PLAN</span><h2>Plan details</h2></div></div>
+        <div className="plan-form-grid">
+          <div className="form-field"><label htmlFor="new-plan-name">Plan name</label><input id="new-plan-name" required maxLength={36} value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Usiku"/></div>
+          <div className="form-field"><label htmlFor="new-plan-description">Short description</label><input id="new-plan-description" maxLength={48} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="e.g. Night access"/></div>
+          <div className="form-field"><label htmlFor="new-plan-hours">Access duration (hours)</label><input id="new-plan-hours" type="number" min="1" max="8760" step="1" required value={draft.durationHours} onChange={(event) => setDraft((current) => ({ ...current, durationHours: event.target.value }))}/></div>
+          <div className="form-field"><label htmlFor="new-plan-price">Price (TZS)</label><input id="new-plan-price" type="number" min="0" step="100" required value={draft.price} onChange={(event) => setDraft((current) => ({ ...current, price: event.target.value }))}/></div>
+          <div className="form-field"><label htmlFor="new-plan-data">Data cap (MB, optional)</label><input id="new-plan-data" type="number" min="1" step="1" value={draft.dataLimitMb} onChange={(event) => setDraft((current) => ({ ...current, dataLimitMb: event.target.value }))} placeholder="No cap"/></div>
+          <div className="form-field"><label htmlFor="new-plan-speed">Speed limit (Mbps, optional)</label><input id="new-plan-speed" type="number" min="1" step="1" value={draft.speedLimitMbps} onChange={(event) => setDraft((current) => ({ ...current, speedLimitMbps: event.target.value }))} placeholder="No limit"/></div>
+        </div>
+        <div className="plan-form-actions"><button className="button button-dark" type="submit">Save plan</button><button className="button button-outline" type="button" onClick={() => setCreateOpen(false)}>Cancel</button></div>
+      </form>}
+      <div className="plan-grid">{planList.map((plan) => <article className={`plan-card ${plan.id === selectedPlanId ? "plan-card-selected" : ""}`} key={plan.id}><div className="plan-card-top"><span className="plan-icon">◷</span><span className="plan-description">{plan.description}</span>{plan.custom && <button type="button" className="plan-remove" onClick={() => removePlan(plan.id)} aria-label={`Remove ${plan.name} plan`}>×</button>}</div><h2>{plan.name}</h2><p>{durationLabel(plan.durationHours)} access{plan.dataLimitMb ? ` · ${formatData(plan.dataLimitMb)} cap` : ""}{plan.speedLimitMbps ? ` · ${plan.speedLimitMbps} Mbps` : ""}</p><div className="plan-price"><strong>{formatMoney(plan.price)}</strong><span>TZS</span></div><button type="button" className="text-link" onClick={() => setSelectedPlanId(plan.id)}>Use this plan <span>→</span></button></article>)}</div>
+    </section>
     <section className="workspace-grid voucher-workspace-grid">
       <article className="panel workspace-card voucher-generator"><div className="workspace-card-heading"><span className="panel-kicker">VOUCHER BATCH</span><h2>Prepare access codes</h2><p>Choose a plan and batch size to create a printable preview.</p></div>
-        <div className="form-field"><label htmlFor="voucher-plan">Access plan</label><select id="voucher-plan" value={planName} onChange={(event) => setPlanName(event.target.value)}>{plans.map((plan) => <option key={plan.name} value={plan.name}>{plan.name} · {plan.duration} · TZS {formatMoney(plan.price)}</option>)}</select></div>
+        <div className="form-field"><label htmlFor="voucher-plan">Access plan</label><select id="voucher-plan" value={selectedPlan.id} onChange={(event) => setSelectedPlanId(event.target.value)}>{planList.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {durationLabel(plan.durationHours)} · TZS {formatMoney(plan.price)}</option>)}</select></div>
         <div className="form-field"><label htmlFor="voucher-count">Number of codes</label><select id="voucher-count" value={count} onChange={(event) => setCount(Number(event.target.value))}>{[5, 10, 25, 50].map((amount) => <option key={amount} value={amount}>{amount} vouchers</option>)}</select></div>
-        <div className="generator-summary"><span>Batch value</span><strong>TZS {formatMoney(selectedPlan.price * count)}</strong></div><button className="button button-dark full-width-button" onClick={generate}>Generate preview codes</button>
+        <div className="generator-summary"><span>Batch value</span><strong>TZS {formatMoney(selectedPlan.price * count)}</strong></div><button className="button button-dark full-width-button" type="button" onClick={generate}>Generate preview codes</button>
       </article>
-      <article className="panel workspace-card generated-card"><div className="generated-heading"><div><span className="panel-kicker">BATCH PREVIEW</span><h2>{codes.length ? `${codes.length} voucher codes` : "Your codes will appear here"}</h2></div>{codes.length > 0 && <button className="button button-outline" onClick={download}>Download CSV</button>}</div>
-        {codes.length ? <><div className="generated-meta">{selectedPlan.name} · {selectedPlan.duration} · TZS {formatMoney(selectedPlan.price)} each</div><div className="voucher-code-list">{codes.map((code) => <code key={code}>{code}</code>)}</div><button className="button button-outline" onClick={() => window.print()}>Print voucher sheet</button></> : <div className="empty-state voucher-empty"><strong>No preview generated yet</strong><span>Create a batch to see codes here.</span></div>}
+      <article className="panel workspace-card generated-card"><div className="generated-heading"><div><span className="panel-kicker">BATCH PREVIEW</span><h2>{batch ? `${batch.codes.length} voucher codes` : "Your codes will appear here"}</h2></div>{batch && <button className="button button-outline" onClick={download}>Download CSV</button>}</div>
+        {batch ? <><div className="generated-meta">{batch.plan.name} · {durationLabel(batch.plan.durationHours)} · TZS {formatMoney(batch.plan.price)} each · {formatDate(batch.createdAt)}{batch.plan.dataLimitMb ? ` · ${formatData(batch.plan.dataLimitMb)} cap` : ""}{batch.plan.speedLimitMbps ? ` · ${batch.plan.speedLimitMbps} Mbps` : ""}</div><div className="voucher-code-list">{batch.codes.map((code) => <code key={code}>{code}</code>)}</div><button className="button button-outline" onClick={() => window.print()}>Print voucher sheet</button></> : <div className="empty-state voucher-empty"><strong>No preview generated yet</strong><span>Create a batch to see codes here.</span></div>}
         {message && <p className="inline-success" role="status">{message}</p>}
       </article>
     </section>
