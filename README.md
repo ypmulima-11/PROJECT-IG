@@ -117,4 +117,3 @@ Socket.IO publishes `dashboard:snapshot` every five seconds. The fixtures use Ta
 ### PostgreSQL schema
 
 See [`database/schema.sql`](database/schema.sql). Entity relationships, operational boundaries, and migration notes are in [`docs/architecture.md`](docs/architecture.md).
-

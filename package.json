@@ -1,0 +1,16 @@
+{
+  "name": "project-ig",
+  "private": true,
+  "version": "0.1.0",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB -c green,cyan \"pnpm --filter @project-ig/api dev\" \"pnpm --filter @project-ig/web dev\"",
+    "dev:api": "pnpm --filter @project-ig/api dev",
+    "dev:web": "pnpm --filter @project-ig/web dev",
+    "build": "pnpm --filter @project-ig/api build && pnpm --filter @project-ig/web build",
+    "start": "concurrently -k -n API,WEB -c green,cyan \"pnpm --filter @project-ig/api start\" \"pnpm --filter @project-ig/web start\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
